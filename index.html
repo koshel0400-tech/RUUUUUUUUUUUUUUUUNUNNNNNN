@@ -1,4 +1,4 @@
-<meta name='viewport' content='width=device-width, initial-scale=1'/><!DOCTYPE html>
+<meta name='viewport' content='width=device-width, initial-scale=1'/><meta name='viewport' content='width=device-width, initial-scale=1'/><!DOCTYPE html>
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
@@ -88,6 +88,13 @@ let walls = [];
 let isRunning = false;
 let isDead = false;
 
+// ПЕРЕМЕННЫЕ ДЛЯ 75 КАДРОВ
+let monsterTextures = [];
+const totalFrames = 75;
+const baseName = "abb3ee3e-d9c3-408c-ba21-b024a9f5bc8d-";
+let currentFrame = 0;
+let animTimer = 0;
+
 let joystickTouchId = null;
 let joystickStartCoords = { x: 0, y: 0 };
 let moveInput = { x: 0, y: 0 }; 
@@ -95,6 +102,12 @@ let moveInput = { x: 0, y: 0 };
 let lookTouchId = null;
 let lookLastCoords = { x: 0, y: 0 };
 let lookEuler = new THREE.Euler(0, 0, 0, 'YXZ'); 
+
+// Предзагрузка текстур Фредди
+const texLoader = new THREE.TextureLoader();
+for (let i = 0; i < totalFrames; i++) {
+    monsterTextures[i] = texLoader.load(baseName + i + ".png");
+}
 
 function init() {
     scene = new THREE.Scene();
@@ -119,10 +132,11 @@ function init() {
     scene.add(camera);
     scene.add(new THREE.AmbientLight(0x080808));
 
-    const monsterGeo = new THREE.CylinderGeometry(0.8, 0.8, 3.5, 8);
-    const monsterMat = new THREE.MeshBasicMaterial({ color: 0x000000 }); 
-    monster = new THREE.Mesh(monsterGeo, monsterMat);
-    monster.position.set(10, 1.75, 10); 
+    // СОЗДАНИЕ МОНСТРА (СПРАЙТ С 75 КАДРАМИ)
+    const monsterMat = new THREE.SpriteMaterial({ map: monsterTextures[0], fog: true });
+    monster = new THREE.Sprite(monsterMat);
+    monster.scale.set(4, 5, 1); 
+    monster.position.set(10, 2.5, 10); 
     scene.add(monster);
 
     const geo = new THREE.BoxGeometry(4, 4, 4);
@@ -168,10 +182,9 @@ function setupMultitouchInput() {
 
     const MAX_KNOB_DIST = 45;   
 
-    // ИСПРАВЛЕНИЕ 1: Жесткий запрет жестов в момент первого касания
     window.addEventListener('touchstart', (e) => {
         if(!isRunning || isDead) return;
-        e.preventDefault(); // Блокируем зум и свайпы
+        e.preventDefault(); 
 
         for (let i = 0; i < e.changedTouches.length; i++) {
             const touch = e.changedTouches[i];
@@ -186,10 +199,9 @@ function setupMultitouchInput() {
         }
     }, { passive: false });
 
-    // ИСПРАВЛЕНИЕ 2: Жесткий запрет скролла при движении пальца
     window.addEventListener('touchmove', (e) => {
         if(!isRunning || isDead) return;
-        e.preventDefault(); // Блокируем обновление страницы тягой вниз
+        e.preventDefault(); 
 
         for (let i = 0; i < e.touches.length; i++) {
             const touch = e.touches[i];
@@ -197,7 +209,7 @@ function setupMultitouchInput() {
             if (touch.identifier === joystickTouchId) {
                 const dx = touch.clientX - joystickStartCoords.x;
                 const dy = touch.clientY - joystickStartCoords.y;
-                const dist = Math.sqrt(dx*dx + dy*dy);
+                const dist = Math.sqrt(dx*dx + dy*dy); // ИСПРАВЛЕНО dy*dy
                 const rad = Math.atan2(dy, dx);
                 const clampedDist = Math.min(dist, MAX_KNOB_DIST);
                 
@@ -218,7 +230,6 @@ function setupMultitouchInput() {
 
     const endTouch = (e) => {
         if(!isRunning || isDead) return;
-        // Здесь preventDefault не ставим, иначе могут сломаться другие элементы
         for (let i = 0; i < e.changedTouches.length; i++) {
             const touch = e.changedTouches[i];
             if (touch.identifier === joystickTouchId) {
@@ -239,19 +250,13 @@ function setupMultitouchInput() {
 function triggerJumpscare() {
     isDead = true;
     moveInput = {x: 0, y: 0};
-    
     const bgMusic = document.getElementById('bg-music');
     bgMusic.pause();
-    
     document.getElementById('screamer-screen').style.display = 'block';
-    
     const scream = document.getElementById('scream-sound');
-    scream.currentTime = 0; // Воспроизводим с начала
+    scream.currentTime = 0; 
     scream.play();
-
-    setTimeout(() => {
-        location.reload();
-    }, 3000);
+    setTimeout(() => { location.reload(); }, 3000);
 }
 
 function update() {
@@ -260,12 +265,19 @@ function update() {
 
     const dt = clock.getDelta();
 
-    const monsterSpeed = 3.2; // Чуть ускорил монстра для динамики
+    // АНИМАЦИЯ ФРЕДДИ
+    animTimer += dt;
+    if (animTimer > 0.04) {
+        animTimer = 0;
+        currentFrame = (currentFrame + 1) % totalFrames;
+        monster.material.map = monsterTextures[currentFrame];
+    }
+
+    const monsterSpeed = 3.2; 
     const directionToPlayer = new THREE.Vector3().subVectors(camera.position, monster.position).normalize();
     directionToPlayer.y = 0; 
-    
     monster.position.addScaledVector(directionToPlayer, monsterSpeed * dt);
-    monster.lookAt(camera.position);
+    monster.position.y = 2.5;
 
     if (camera.position.distanceTo(monster.position) < 1.5) {
         triggerJumpscare();
@@ -305,11 +317,9 @@ function checkCollision(pos) {
 
 document.getElementById('start').onclick = () => {
     document.getElementById('menu').style.display = 'none';
-    
     const bgMusic = document.getElementById('bg-music');
     bgMusic.volume = 0.5; 
     bgMusic.play();
-
     isRunning = true;
     init();
 };
