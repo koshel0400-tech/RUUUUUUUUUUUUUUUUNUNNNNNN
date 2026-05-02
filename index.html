@@ -1,0 +1,326 @@
+<meta name='viewport' content='width=device-width, initial-scale=1'/><!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Void Tunnel - GitHub Edition</title>
+    <style>
+        /* УСИЛЕННАЯ БЛОКИРОВКА ЖЕСТОВ ДЛЯ МОБИЛЬНЫХ */
+        * {
+            -webkit-touch-callout: none !important;
+            -webkit-user-select: none !important;
+            user-select: none !important;
+            touch-action: none !important;
+            outline: none;
+        }
+
+        body, html { 
+            margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; 
+            background-color: #000; font-family: 'Courier New', monospace;
+        }
+        #game-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; }
+        #ui-overlay { position: absolute; width: 100%; height: 100%; z-index: 10; pointer-events: none; }
+        
+        #joy-base { 
+            position: absolute; bottom: 40px; left: 40px; width: 120px; height: 120px; 
+            background: rgba(255, 255, 255, 0.03); border-radius: 50%; 
+            border: 2px solid rgba(255,0,0,0.1); display: none; 
+        }
+        #joy-knob { 
+            position: absolute; top: 50%; left: 50%; width: 50px; height: 50px; 
+            background: radial-gradient(circle, #800, #300); border-radius: 50%; 
+            transform: translate(-50%, -50%); box-shadow: 0 0 15px rgba(255,0,0,0.3);
+        }
+
+        #menu { 
+            position: absolute; width: 100%; height: 100%; background: #000; 
+            display: flex; flex-direction: column; justify-content: center; 
+            align-items: center; z-index: 100; color: #f00;
+        }
+        h1 { text-transform: uppercase; letter-spacing: 4px; text-shadow: 0 0 10px #f00; text-align: center; }
+        button { 
+            padding: 20px 60px; font-size: 1.5rem; background: transparent; color: #f00; 
+            border: 2px solid #f00; cursor: pointer; transition: 0.2s; pointer-events: auto;
+        }
+        button:active { background: #300; transform: scale(0.95); }
+
+        #screamer-screen {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background-color: black;
+            background-image: url('screamer.gif');
+            background-size: cover;
+            background-position: center;
+            z-index: 9999;
+            display: none; 
+        }
+    </style>
+</head>
+<body>
+
+<audio id="bg-music" src="music.mp3" loop preload="auto"></audio>
+<audio id="scream-sound" src="scream.mp3" preload="auto"></audio>
+
+<div id="menu">
+    <h1>VOID TUNNEL</h1>
+    <p style="color: #888">ОБЕРНИСЬ</p>
+    <button id="start">ВОЙТИ</button>
+</div>
+
+<div id="screamer-screen"></div>
+<div id="game-canvas"></div>
+
+<div id="ui-overlay">
+    <div id="joy-base"><div id="joy-knob"></div></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/AfterimageShader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/AfterimagePass.js"></script>
+
+<script>
+let scene, camera, renderer, composer, clock;
+let flashlight, monster;
+let walls = [];
+let isRunning = false;
+let isDead = false;
+
+let joystickTouchId = null;
+let joystickStartCoords = { x: 0, y: 0 };
+let moveInput = { x: 0, y: 0 }; 
+
+let lookTouchId = null;
+let lookLastCoords = { x: 0, y: 0 };
+let lookEuler = new THREE.Euler(0, 0, 0, 'YXZ'); 
+
+function init() {
+    scene = new THREE.Scene();
+    scene.fog = new THREE.Fog(0x000000, 1, 20);
+    
+    camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 100);
+    camera.rotation.order = 'YXZ'; 
+    
+    renderer = new THREE.WebGLRenderer({ antialias: false });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+    document.getElementById('game-canvas').appendChild(renderer.domElement);
+
+    composer = new THREE.EffectComposer(renderer);
+    composer.addPass(new THREE.RenderPass(scene, camera));
+    composer.addPass(new THREE.AfterimagePass(0.85));
+
+    flashlight = new THREE.SpotLight(0xfffee0, 12, 50, Math.PI/4.5, 0.3, 1.2);
+    camera.add(flashlight);
+    flashlight.target.position.set(0, 0, -1);
+    camera.add(flashlight.target);
+    scene.add(camera);
+    scene.add(new THREE.AmbientLight(0x080808));
+
+    const monsterGeo = new THREE.CylinderGeometry(0.8, 0.8, 3.5, 8);
+    const monsterMat = new THREE.MeshBasicMaterial({ color: 0x000000 }); 
+    monster = new THREE.Mesh(monsterGeo, monsterMat);
+    monster.position.set(10, 1.75, 10); 
+    scene.add(monster);
+
+    const geo = new THREE.BoxGeometry(4, 4, 4);
+    const mat = new THREE.MeshLambertMaterial({ color: 0x333333 });
+    const map = [
+        [1,1,1,1,1,1,1,1,1,1],
+        [1,0,0,0,1,0,0,0,0,1],
+        [1,0,1,0,1,0,1,1,0,1],
+        [1,0,1,0,0,0,0,1,0,1],
+        [1,0,1,1,1,1,0,1,0,1],
+        [1,0,0,0,0,0,0,0,0,1],
+        [1,1,1,1,1,1,1,1,1,1]
+    ];
+
+    for(let z=0; z<map.length; z++) {
+        for(let x=0; x<map[z].length; x++) {
+            if(map[z][x] === 1) {
+                const wall = new THREE.Mesh(geo, mat);
+                wall.position.set(x*4 - 20, 2, z*4 - 14);
+                scene.add(wall);
+                walls.push(new THREE.Box3().setFromObject(wall));
+            }
+        }
+    }
+
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(100,100), new THREE.MeshLambertMaterial({color: 0x111111}));
+    floor.rotation.x = -Math.PI/2;
+    scene.add(floor);
+
+    camera.position.set(-14, 1.7, -10);
+    lookEuler.setFromQuaternion(camera.quaternion); 
+
+    clock = new THREE.Clock();
+
+    setupMultitouchInput();
+    update();
+}
+
+function setupMultitouchInput() {
+    const knob = document.getElementById('joy-knob');
+    const joyBase = document.getElementById('joy-base');
+    joyBase.style.display = 'block'; 
+
+    const MAX_KNOB_DIST = 45;   
+
+    // ИСПРАВЛЕНИЕ 1: Жесткий запрет жестов в момент первого касания
+    window.addEventListener('touchstart', (e) => {
+        if(!isRunning || isDead) return;
+        e.preventDefault(); // Блокируем зум и свайпы
+
+        for (let i = 0; i < e.changedTouches.length; i++) {
+            const touch = e.changedTouches[i];
+            if (touch.clientX < window.innerWidth / 2 && joystickTouchId === null) {
+                joystickTouchId = touch.identifier;
+                joystickStartCoords = { x: touch.clientX, y: touch.clientY };
+                moveInput = { x: 0, y: 0 };
+            } else if (touch.clientX >= window.innerWidth / 2 && lookTouchId === null) {
+                lookTouchId = touch.identifier;
+                lookLastCoords = { x: touch.clientX, y: touch.clientY };
+            }
+        }
+    }, { passive: false });
+
+    // ИСПРАВЛЕНИЕ 2: Жесткий запрет скролла при движении пальца
+    window.addEventListener('touchmove', (e) => {
+        if(!isRunning || isDead) return;
+        e.preventDefault(); // Блокируем обновление страницы тягой вниз
+
+        for (let i = 0; i < e.touches.length; i++) {
+            const touch = e.touches[i];
+            
+            if (touch.identifier === joystickTouchId) {
+                const dx = touch.clientX - joystickStartCoords.x;
+                const dy = touch.clientY - joystickStartCoords.y;
+                const dist = Math.sqrt(dx*dx + dy*dy);
+                const rad = Math.atan2(dy, dx);
+                const clampedDist = Math.min(dist, MAX_KNOB_DIST);
+                
+                knob.style.transform = `translate(calc(-50% + ${Math.cos(rad)*clampedDist}px), calc(-50% + ${Math.sin(rad)*clampedDist}px))`;
+                moveInput.x = Math.cos(rad) * (clampedDist/MAX_KNOB_DIST);
+                moveInput.y = Math.sin(rad) * (clampedDist/MAX_KNOB_DIST);
+            }
+            
+            if (touch.identifier === lookTouchId) {
+                const sens = 0.005; 
+                lookEuler.y -= (touch.clientX - lookLastCoords.x) * sens;
+                lookEuler.x = Math.max(-1.4, Math.min(1.4, lookEuler.x - (touch.clientY - lookLastCoords.y) * sens)); 
+                camera.quaternion.setFromEuler(lookEuler);
+                lookLastCoords = { x: touch.clientX, y: touch.clientY };
+            }
+        }
+    }, { passive: false });
+
+    const endTouch = (e) => {
+        if(!isRunning || isDead) return;
+        // Здесь preventDefault не ставим, иначе могут сломаться другие элементы
+        for (let i = 0; i < e.changedTouches.length; i++) {
+            const touch = e.changedTouches[i];
+            if (touch.identifier === joystickTouchId) {
+                joystickTouchId = null; 
+                moveInput = { x: 0, y: 0 };
+                knob.style.transform = 'translate(-50%, -50%)';
+            }
+            if (touch.identifier === lookTouchId) {
+                lookTouchId = null;
+            }
+        }
+    };
+
+    window.addEventListener('touchend', endTouch, { passive: false });
+    window.addEventListener('touchcancel', endTouch, { passive: false });
+}
+
+function triggerJumpscare() {
+    isDead = true;
+    moveInput = {x: 0, y: 0};
+    
+    const bgMusic = document.getElementById('bg-music');
+    bgMusic.pause();
+    
+    document.getElementById('screamer-screen').style.display = 'block';
+    
+    const scream = document.getElementById('scream-sound');
+    scream.currentTime = 0; // Воспроизводим с начала
+    scream.play();
+
+    setTimeout(() => {
+        location.reload();
+    }, 3000);
+}
+
+function update() {
+    requestAnimationFrame(update);
+    if(!isRunning || isDead) return;
+
+    const dt = clock.getDelta();
+
+    const monsterSpeed = 3.2; // Чуть ускорил монстра для динамики
+    const directionToPlayer = new THREE.Vector3().subVectors(camera.position, monster.position).normalize();
+    directionToPlayer.y = 0; 
+    
+    monster.position.addScaledVector(directionToPlayer, monsterSpeed * dt);
+    monster.lookAt(camera.position);
+
+    if (camera.position.distanceTo(monster.position) < 1.5) {
+        triggerJumpscare();
+        return;
+    }
+
+    if(moveInput.x !== 0 || moveInput.y !== 0) {
+        const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+        forward.y = 0; forward.normalize();
+        const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).negate().normalize();
+
+        const velocity = new THREE.Vector3();
+        velocity.addScaledVector(forward, -moveInput.y * 5.0 * dt); 
+        velocity.addScaledVector(right, -moveInput.x * 5.0 * dt);
+
+        const nextX = camera.position.clone(); nextX.x += velocity.x;
+        if(!checkCollision(nextX)) camera.position.x = nextX.x;
+
+        const nextZ = camera.position.clone(); nextZ.z += velocity.z;
+        if(!checkCollision(nextZ)) camera.position.z = nextZ.z;
+        
+        camera.position.y = 1.7 + Math.sin(clock.elapsedTime * 9) * 0.04;
+    }
+
+    if(Math.random() > 0.98) flashlight.intensity = 8 + Math.random() * 4;
+
+    composer.render();
+}
+
+function checkCollision(pos) {
+    const pBox = new THREE.Box3().setFromCenterAndSize(pos, new THREE.Vector3(1.2, 2, 1.2));
+    for(let wall of walls) {
+        if(pBox.intersectsBox(wall)) return true;
+    }
+    return false;
+}
+
+document.getElementById('start').onclick = () => {
+    document.getElementById('menu').style.display = 'none';
+    
+    const bgMusic = document.getElementById('bg-music');
+    bgMusic.volume = 0.5; 
+    bgMusic.play();
+
+    isRunning = true;
+    init();
+};
+
+window.addEventListener('resize', () => {
+    if(!camera) return;
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    composer.setSize(window.innerWidth, window.innerHeight);
+});
+</script>
+</body>
+</html>
